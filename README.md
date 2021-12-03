@@ -3,6 +3,27 @@
 This project repository provides a headless module to enrich location data in a database table using the Google Maps Geocode API.
 
 ## Table of Contents
+* [Background](#background)
+* [Technical Overview](#technical-overview)
+* [Google Web Services Legal Disclaimer](#google-web-services-legal-disclaimer)
+* [Project Directory Structure](#project-directory-structure)
+* [Prerequisites](#prerequisites)
+  * [Technical Prerequisites](#technical-prerequisites)
+    * [Google Maps Geocode API Credentials](#google-maps-geocode-api-credentials)
+    * [Docker Requirements](#docker-requirements)
+    * [Python Requirements](#python-requirements)
+* [Technical Component Overview](#technical-component-overview)
+  * [Dependencies](#dependencies)
+  * [Parallelized Enrichment Process](#parallelized-enrichment-process)
+  * [Kafka Partitions](#kafka-partitions)
+* [Deployment Instructions](#deployment-instructions)
+* [Common Test Examples](#common-test-examples)
+  * [Interactive Geocode API JSON Response from Web Browser](#interactive-geocode-api-json-response-from-web-browser)
+* [Standards](#standards)
+  * [File Properties](#file-properties)
+  * [Coding Standards](#coding-standards)
+* [Author Contact](#author-contact)
+
 
 ## Background
 

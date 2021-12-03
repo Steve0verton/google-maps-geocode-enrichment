@@ -1,1 +1,3 @@
 theme: jekyll-theme-slate
+title: Google Maps Geocode Enrichment
+description: This project repository provides a headless module to enrich location data in a database table using the Google Maps Geocode API.
