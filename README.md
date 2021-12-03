@@ -1,19 +1,26 @@
 # Google Maps Geocode Enrichment
 
-Provides a headless module to enrich location data in a database table using the Google Maps geocode API. This provides excellent context and address resolution using Google Maps.
+This project repository provides a headless module to enrich location data in a database table using the Google Maps Geocode API.
 
 ## Table of Contents
 
+## Background
+
+This module was built to provide data cleansing and enrichment for physical mailing address locations scraped from public data sources.  Street address locations can contain many typos, variations in spellings, misspellings and other problems.  The [Google Maps Geocode Service](https://developers.google.com/maps/documentation/geocoding/overview) was selected as a source of data enhancement and enrichment because Google Maps is one of the best sources of location-based addresses across the world and because of the advanced Natural Language Prediction (NLP) capabilities inherent in using this service for address resolution.
+
+The original design of this data enrichment module leveraged the following outputs from the Geocoding API:
+1. Latitude / Longitude coorindates for a street address
+2. Standardized cleansed street address
+3. Tokenized pieces of the street address for additional filtering, analysis and grouping (i.e. parse "NC" from and address in North Carolina and store in a "State" column)
+
+The scope of this module is intended to be a headless engine running on an as-needed basis to update records in a database table as a part of a broader data management pipeline.  Example use cases include data warehousing and data lakes.
+
+## Technical Overview
+
+This project repository provides source code to build a process to enrich address locations via the [Google Geocode API](https://developers.google.com/maps/documentation/geocoding/overview).  The source code is in python and is containerized with Docker.  This serves to address 2 main concerns.  First that it is written in a language that is approachable for data analysis purposes, and second it's efficient and fast enough to provide **~500,000 updates in 1 day**.  Parallelization of the Google API interaction step is needed to meet the latter criteria, and containerization serves as a useful means to accomplish that.
 
 
-## Overview
-
-This software application provides a process to enrich address locations via the [Google Geocode API](https://developers.google.com/maps/documentation/geocoding/overview).  The source code is in python and is containerized with Docker.  This serves to address 2 main concerns.  First that it is written in a language that is approachable for data analysis purposes, and second it's efficient and fast enough to provide ~500,000 updates in 1 day.  Parallelization of the Google API interaction step is needed to meet the latter criteria, and containerization serves as a useful means to accomplish that.
-
-TODO: deployed as a production app as a part of ETL flow, include diagram
-
-
-### Google Web Services Legal Disclaimer
+## Google Web Services Legal Disclaimer
 
 Google provides explicit terms of use for their products.  This application leverages the **Geocoding API** service which has policies to be considered for your intended use of the data retrieved. Sections related to **pre-fetching** and **caching** of content apply directly to this application. Google explicitly states that data from the Geocoding API must not be pre-fetched, cached, or stored except under limited conditions.  
 
@@ -81,6 +88,45 @@ This application requires the latest version of Python installed.
 - [Download Python](https://www.python.org/downloads/)
 
 
+## Technical Component Overview
+
+The following list provides an overview of key components:
+- PostgreSQL database
+- geocode_lib library (custom python application written in Docker)
+- Kafka infrastructure
+- Enrichment process (custom python applications built with docker compose)
+
+### Dependencies
+
+PostgreSQL and Kafka must be running before the enrichment process begins.  The `geocode_lib` Docker image must be built as well.  The enrichment process leverages these in a service-oriented manner.
+
+### Parallelized Enrichment Process
+
+Queries to Google must be parallelized; to accomplish this, a single client (**pg_query**) interacts with postgres, places the query on a kafka topic **geocode_input**, multiple clients (**g_query**) take these queries in parallel and convert the result to a format usable by the to-progres process and place it in a result topic **geocode_output**. And finally a single process (**pg_update**) reads the contents of that output topic and updates the database with the results.
+
+The rate limiting is controlled by **pg_query**.
+
+
+### Kafka Partitions
+
+To allow the parallelism concept to work, the geocode_input Kafka topic must have a number of partitions greater or equal to the number of g_query clients.
+
+Enter the running Kafka Docker container.
+```bash
+docker exec -it infra_kafka_1 /bin/bash
+```
+
+Set partitions on a new topic
+```bash
+kafka-topics.sh --create --zookeeper zookeeper --topic geocode_input --partitions 50 --replication-factor 1
+```
+
+Or if the topic already exists
+```bash
+kafka-topics.sh --alter --zookeeper zookeeper --topic geocode_input --partitions 50
+```
+
+
 ## Deployment Instructions
 
 The following steps can be used to build a local environment for development and testing purposes or a production environment for data enrichment as a part of an ETL data flow process.
@@ -93,7 +139,7 @@ The following steps can be used to build a local environment for development and
 
   If the network already exists, Docker will display a message.
 
-2. **Build and Start PostgreSQL Database Container** (if desired) for development and testing purposes only. Production data management flows will most likely have other PostgreSQL database sources which can be configured within the [docker-compose.yml](./cluster/app/docker-compose.yml) file.  Further instructions provide steps to configure this file.
+2. **Build and Start PostgreSQL Database Container (if desired) for development and testing purposes only.** Production data management flows will most likely have other PostgreSQL database sources which can be configured within the [docker-compose.yml](./cluster/app/docker-compose.yml) file.  Further instructions provide steps to configure this file.
 
   Switch to Docker image definition from the project root.
   ```bash
@@ -143,6 +189,7 @@ The following steps can be used to build a local environment for development and
   docker-compose up -d
   ```
   - The [docker-compose.yml](./cluster/infra/docker-compose.yml) defines how Kafka is deployed.
+  - Official images are built from the [wurstmeister](https://hub.docker.com/r/wurstmeister/kafka) Docker hub.
 
   The `docker-compose` command above builds and runs the Docker container in the background.
 
@@ -161,44 +208,13 @@ The following steps can be used to build a local environment for development and
 
   The `docker-compose` command above builds and runs the Docker container in the background.
 
-## Common Test Commands
+## Common Test Examples
 
-https://maps.googleapis.com/maps/api/geocode/json?address=39%20Fieldstone%20Dr&key=API_KEY
+### Interactive Geocode API JSON Response from Web Browser
 
-## Cluster
+To simulate the Geocode API interactively from a web browser and visually understand the JSON response, use the following URL structure with your API key:
 
-Queries to Google must be parallelized; to accomplish this, a single client (**pg_query**) interacts with postgres, places the query on a kafka topic **geocode_input**, multiple clients (**g_query**) take these queries in parallel and convert the result to a format usable by the to-progres process and place it in a result topic **geocode_output**. And finally a single process (**pg_update**) reads the contents of that output topic and updates the database with the results.
-
-The rate limiting is controlled by **pg_query**;  
-
-
-### Set Partitions
-
-To allow the parallelism concept to work, the geocode_input topic must have a number of partitions greater or equal to the number of g_query clients.
-
-```bash
-docker exec -it infra_kafka_1 /bin/bash
-kafka-topics.sh --create --zookeeper zookeeper --topic geocode_input --partitions 50 --replication-factor 1
-```
-
-or if the topic already exists
-```bash
-kafka-topics.sh --alter --zookeeper zookeeper --topic geocode_input --partitions 50
-```
-
-
-### Start
-
-The docker-compose file located in app contains the description of what must be started, but not how many and that detail is controlled by a command line option.  For example, the following launches the default number of clients except for `g_query` where the number of that docker is 50.
-
-```bash
-docker-compose up -d --scale g_query=50
-```
-
-
-### Start Order
-
-There are 2 docker compose files, one in the directory infra and one in app.  Start the infrastructure first (using `docker-compose up -d`) in the infra directory first, then issue the command above to set the number of partitions, then issue docker-compose up again in the app directory (using `docker-compose up -d --scale g_query=50`).
+``https://maps.googleapis.com/maps/api/geocode/json?address=1030%20Richardson%20Dr,%20Raleigh,%20NC%2027603&key=ENTER_YOUR_API_KEY``
 
 
 ## Standards
