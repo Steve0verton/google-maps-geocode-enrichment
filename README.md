@@ -19,6 +19,8 @@ The scope of this module is intended to be a headless engine running on an as-ne
 
 This project repository provides source code to build a process to enrich address locations via the [Google Geocode API](https://developers.google.com/maps/documentation/geocoding/overview).  The source code is in python and is containerized with Docker.  This serves to address 2 main concerns.  First that it is written in a language that is approachable for data analysis purposes, and second it's efficient and fast enough to provide **~500,000 updates in 1 day**.  Parallelization of the Google API interaction step is needed to meet the latter criteria, and containerization serves as a useful means to accomplish that.
 
+[<img src="./doc/img/overview.png" alt="Overview" width="600"/>](./doc/img/overview.png?raw=true)
+
 
 ## Google Web Services Legal Disclaimer
 
@@ -125,6 +127,8 @@ Or if the topic already exists
 ```bash
 kafka-topics.sh --alter --zookeeper zookeeper --topic geocode_input --partitions 50
 ```
+
+Additional documentation can be found on the [wurstmeister Kafka Github](https://github.com/wurstmeister/kafka-docker).
 
 
 ## Deployment Instructions
