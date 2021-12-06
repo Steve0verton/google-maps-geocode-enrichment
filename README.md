@@ -12,13 +12,22 @@ This project repository provides a headless module to enrich location data in a 
     * [Google Maps Geocode API Credentials](#google-maps-geocode-api-credentials)
     * [Docker Requirements](#docker-requirements)
     * [Python Requirements](#python-requirements)
+    * [PostgreSQL Requirements](#postgresql-requirements)
 * [Technical Component Overview](#technical-component-overview)
   * [Dependencies](#dependencies)
   * [Parallelized Enrichment Process](#parallelized-enrichment-process)
   * [Kafka Partitions](#kafka-partitions)
 * [Deployment Instructions](#deployment-instructions)
+* [Scaling Performance](#scaling-performance)
+* [ref_location](#reflocation)
+  * [Physical Table Definition](#physical-table-definition)
+  * [Logical Data Flow](#logical-data-flow)
 * [Common Test Examples](#common-test-examples)
   * [Interactive Geocode API JSON Response from Web Browser](#interactive-geocode-api-json-response-from-web-browser)
+* [Required Monitoring and Troubleshooting](#required-monitoring-and-troubleshooting)
+  * [Volume Disk Space](#volume-disk-space)
+  * [Logs](#logs)
+* [Useful Docker Commands](#useful-docker-commands)
 * [Standards](#standards)
   * [File Properties](#file-properties)
   * [Coding Standards](#coding-standards)
@@ -318,7 +327,7 @@ Additional documentation on geocode data output can be found on the [Google Maps
 
 ### Logical Data Flow
 
-The **ref_location** table is designed to be an independent location to write any type of address location typically entered into Google Maps or any street address location service or GIS tool.  Addresses may be partial, limited or only cover broad cities or states.  The Google Maps Geocode API will provide a value regardless and this application enrichment process will ingest and update the **ref_location** table accordingly.  PostgreSQL is a high performance transactional database which can manage many simultaneous reads, writes and updates.
+The **ref_location** table is designed to be an independent source and target to write any type of address location typically entered into Google Maps or any street address location service or GIS tool.  Addresses may be partial, limited or only cover broad cities or states.  The Google Maps Geocode API will provide a value regardless and this application enrichment process will ingest and update the **ref_location** table accordingly.  PostgreSQL is a high performance transactional database which can manage many simultaneous reads, writes and updates. The `location_hash` value must be pre-computed prior to inserting into the **ref_location** table.  This can be something simple such as an MD5 hash of the location string.  Assuming this enrichment process is running, as location records are inserted into **ref_location** they will be updated in near real time or as the queue permits.
 
 
 ## Common Test Examples
@@ -327,9 +336,46 @@ The **ref_location** table is designed to be an independent location to write an
 
 To simulate the Geocode API interactively from a web browser and visually understand the JSON response, use the following URL structure with your API key:
 
-``https://maps.googleapis.com/maps/api/geocode/json?address=1030%20Richardson%20Dr,%20Raleigh,%20NC%2027603&key=ENTER_YOUR_API_KEY``
+`https://maps.googleapis.com/maps/api/geocode/json?address=1030%20Richardson%20Dr,%20Raleigh,%20NC%2027603&key=ENTER_YOUR_API_KEY`
 
 ## Required Monitoring and Troubleshooting
+
+### Volume Disk Space
+
+As the application threads into many parallel queries disk storage can become over leveraged.  Monitor disk utilization using the `df -h` command from the Docker host machine.  If disk storage becomes a problem, there could be orphaned disk volumes. Stop all services using the `docker-compose down` command and use the following command to clear dangling docker volumes.
+
+```bash
+docker volume rm $(docker volume ls -qf dangling=true)
+```
+
+### Logs
+
+Monitor Docker logs using the following commands.
+
+List docker containers.
+```bash
+docker container ls
+```
+
+View logs from a container with an exit status.
+```bash
+docker logs <name of container that exited >
+```
+
+## Useful Docker Commands
+
+List all docker images: `docker image ls`
+
+List all active and running containers: `docker ps`
+
+List all active (and inactive) containers: `docker ps -a`
+- Helpful to see if one of the apps exited. If that happens, need to restart process, search logs, and possibly decrease number of scaled g_query apps.
+
+Print docker log for troubleshooting: `docker logs app_pg_update_1`
+- Or whatever log you want to look at, after running docker ps –a
+
+Remove images individually: `docker rmi <image ID>`
+- Useful when modifying something within the process and need to rebuild the images and containers
 
 
 ## Standards
