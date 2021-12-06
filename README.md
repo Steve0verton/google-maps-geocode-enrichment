@@ -27,20 +27,22 @@ This project repository provides a headless module to enrich location data in a 
 
 ## Background
 
-This module was built to provide data cleansing and enrichment for physical mailing address locations scraped from public data sources.  Street address locations can contain many typos, variations in spellings, misspellings and other problems.  The [Google Maps Geocode Service](https://developers.google.com/maps/documentation/geocoding/overview) was selected as a source of data enhancement and enrichment because Google Maps is one of the best sources of location-based addresses across the world and because of the advanced Natural Language Prediction (NLP) capabilities inherent in using this service for address resolution.
+This application module was built to provide data cleansing and enrichment for physical mailing address locations scraped from public data sources.  Street address locations can contain many typos, variations in spellings, misspellings and other problems.  The [Google Maps Geocode Service](https://developers.google.com/maps/documentation/geocoding/overview) was selected as a source of data enhancement and enrichment because Google Maps is one of the best sources of location-based addresses across the world and because of the advanced Natural Language Prediction (NLP) capabilities inherent in using this service for address resolution.
 
 The original design of this data enrichment module leveraged the following outputs from the Geocoding API:
 1. Latitude / Longitude coorindates for a street address
-2. Standardized cleansed street address
+2. Standardized cleansed street address label
 3. Tokenized pieces of the street address for additional filtering, analysis and grouping (i.e. parse "NC" from and address in North Carolina and store in a "State" column)
+4. Google Place ID (unique identifier for every location in the world)
 
-The scope of this module is intended to be a headless engine running on an as-needed basis to update records in a database table as a part of a broader data management pipeline.  Example use cases include data warehousing and data lakes.
+The scope of this module is intended to be a headless engine running on an as-needed basis to update records in a database table as a part of a broader data management ETL pipeline.  Example use cases include data warehousing and data lakes.
 
 ## Technical Overview
 
-This project repository provides source code to build a process to enrich address locations via the [Google Geocode API](https://developers.google.com/maps/documentation/geocoding/overview).  The source code is in python and is containerized with Docker.  This serves to address 2 main concerns.  First that it is written in a language that is approachable for data analysis purposes, and second it's efficient and fast enough to provide **~500,000 updates in 1 day**.  Parallelization of the Google API interaction step is needed to meet the latter criteria, and containerization serves as a useful means to accomplish that.
+This project repository provides source code to build a process to enrich address locations via the [Google Geocode API](https://developers.google.com/maps/documentation/geocoding/overview).  The source code is in python and is containerized with Docker.  This serves to address 2 main concerns.  First that it is written in a language that is approachable for data analysis purposes, and second it's efficient and fast enough to provide **~500,000 updates in 1 day**.  Parallelization of the Google API interaction step is needed to meet the latter criteria, and containerization serves as a useful means to accomplish that through scaling features of Docker.
 
-[<img src="./doc/img/overview.png" alt="Overview" width="600"/>](./doc/img/overview.png?raw=true)
+The following conceptual diagram highlights where this application fits into a broader data management strategy.
+[<img src="./doc/img/overview.png" alt="Overview" width="650"/>](./doc/img/overview.png?raw=true)
 
 
 ## Google Web Services Legal Disclaimer
@@ -67,13 +69,14 @@ Key components are organized into the following directory structure:
 - [/doc](./doc) - Project documentation. Example DDL provided for creating the ref_location database table used to cache geocode results by location.
 - [/lib](./lib) - Library code is contained in **lib**.  It constitutes the core reusable components for obtaining work from postgres, querying and collecting results from Google, and updating postgres.  Both the experimental code as well the the production cluster code makes use of it in the same way.
 - [/test](./test) - Experiments, testing and debugging code.  Different aspects of the dev process are illustrated here and can serve as simplistic checks for additional features.
+  - [../postgres_db](./test/postgres_db) - Containerized version of PostgreSQL for development and testing purposes only.
 
 
 ## Prerequisites
 
 Use of this application requires working knowledge of the following technologies:
 
-- [Docker](https://www.docker.com/)
+- [Docker](https://www.docker.com/) and [Docker Compose](https://docs.docker.com/compose/)
 - [Python](https://www.python.org/)
 - [Google Cloud Platform](https://cloud.google.com/)
 - [Google Maps Geocoding API](https://developers.google.com/maps/documentation/geocoding/overview)
@@ -83,6 +86,8 @@ Use of this application requires working knowledge of the following technologies
 - Command Line Interface
   - Mac and Linux machines natively support
   - Windows machines will need a [linux subsystem](https://docs.microsoft.com/en-us/windows/wsl/install)
+- [PostgreSQL Database](https://www.postgresql.org/) (any version)
+
 
 #### Google Maps Geocode API Credentials
 
@@ -110,12 +115,21 @@ This application requires the latest version of Python installed.
 
 - [Download Python](https://www.python.org/downloads/)
 
+#### PostgreSQL Requirements
+
+This application was built using PostgreSQL version 11.x and currently only supports PostgreSQL.  Any version of PostgreSQL should work.  This application uses standard SQL table generation, reads and updates.
+
+- [Download PostgreSQL](https://www.postgresql.org/download/)
+
+A [containerized version of PostgreSQL](./test/postgres_db) is provided to help understand the application in your local environment.
+
 
 ## Technical Component Overview
 
 The following list provides an overview of key components:
 - PostgreSQL database
-- geocode_lib library (custom python application written in Docker)
+- **ref_location** table within PostgreSQL database to store location data
+- **geocode_lib** library (custom python application written in Docker)
 - Kafka infrastructure
 - Enrichment process (custom python applications built with docker compose)
 
@@ -233,6 +247,80 @@ The following steps can be used to build a local environment for development and
 
   The `docker-compose` command above builds and runs the Docker container in the background.
 
+## Scaling Performance
+
+The enrichment process can be scaled in parallel using the `g_query` parameter in Step 5 of the [Deployment Instructions](#deployment-instructions).  Suggested values are provided below.
+- Development Unit Testing = 2
+- QA Testing = 10-50
+- Production = 90-110
+
+Ensure Kafka partitions are defined appropriately as described in the [Kafka Partitions](#kafka-partitions) section.  This application was originally built and operational on a small machine with only **4 vCPUs running 110 parallel threads** (`g_query`=110).
+
+
+## ref_location
+
+The **ref_location** table is used to store location information and results from this enrichment application process retrieved from the Google Maps Geocode API.  This section describes the physical structure of the table as well as intended usage and data flow expectations.  DDL code is provided to build this table along with useful indexes and constraints for PostgreSQL in [./doc/ref_location_ddl.sql](./doc/ref_location_ddl.sql). This application was built using PostgreSQL and currently only supports PostgreSQL.
+
+### Physical Table Definition
+
+The following table describes each column in the **ref_location** table.  Data types align with PostgreSQL supported data types.  Data flow describes where the record value originates for each column.  Record values loaded into **ref_location** via standard ETL data flows are marked with the acronym **ETL**.  These are typically required fields used by this application module to query the Google Maps Geocode API service or for internal record management purposes.  Record values updated by this enrichment application module are marked with the term **App** or **Geocode API (App)**.  Columns marked with **Geocode API (App)** are populated from Google Maps, through the Geocode API, managed by this application.
+
+| Column Name | Data Type | Description | Required? | Data Flow |
+| :-- | :--: | :----- | :--: | :--- |
+| location_hash | text | Unique hash or natural key of address location. **Primary key constraint**.  | Yes | ETL |
+| location | text | Raw address location either as an atomic-level street address or simple city / state.  | Yes | ETL |
+| enrichment_enabled | boolean | True/false value indicating if location enrichment using this application is enabled for record. | Yes | ETL |
+| enrichment_status | text | Simple description of the enrichment process status (`IN_PROCESS`, `COMPLETE`, or null) | | App |
+| formatted_address | text | Standardized and cleansed address | | Geocode API (App) |
+| latitude | numeric(11,6) | Latitude coordinate of location. | | Geocode API (App) |
+| longitude | numeric(11,6) | Longitude coordinate of location. | | Geocode API (App) |
+| load_dttm | timestamp | When the record was loaded into this table. | | App |
+| last_update_dttm | timestamp | When the record was last updated. | | App |
+| google_place_id | text | Unique place identifier provided by Google Maps. | | Geocode API (App) |
+| google_partial_match | boolean | Indicates if the raw location returns a partial match from the Google Maps Geocode API. | | Geocode API (App) |
+| google_result_count | integer | Number of addresses resolved by the Google Maps Geocode API. | | Geocode API (App) |
+| google_result_type | jsonb | JSON string listing of the possible [address types](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| long_street_number | text | Full text description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| long_route | text | Full text description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| long_political | text | Full text description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| long_locality | text | Full text description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| long_postal_code | text | Full text description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| long_postal_code_suffix | text | Full text description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| long_postal_town | text | Full text description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| long_premise | text | Full text description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| long_country | text | Full text description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| long_admin_area_level_1 | text | Full text description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| long_admin_area_level_2 | text | Full text description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| long_admin_area_level_3 | text | Full text description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| long_admin_area_level_4 | text | Full text description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| long_admin_area_level_5 | text | Full text description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| long_establishment | text | Full text description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| short_street_number | text | Abbreviated description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| short_route | text | Abbreviated description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| short_political | text | Abbreviated description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| short_locality | text | Abbreviated description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| short_postal_code | text | Abbreviated description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| short_postal_code_suffix | text | Abbreviated description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| short_postal_town | text | Abbreviated description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| short_premise | text | Abbreviated description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| short_country | text | Abbreviated description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| short_admin_area_level_1 | text | Abbreviated description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| short_admin_area_level_2 | text | Abbreviated description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| short_admin_area_level_3 | text | Abbreviated description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| short_admin_area_level_4 | text | Abbreviated description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| short_admin_area_level_5 | text | Abbreviated description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| short_establishment | text | Abbreviated description. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| location_type | jsonb | Address type. See [address types and components](https://developers.google.com/maps/documentation/geocoding/overview#Types). | | Geocode API (App) |
+| enrichment_api_response | jsonb | Full API JSON response provided by Geocode API service. | | Geocode API (App) |
+
+Additional documentation on geocode data output can be found on the [Google Maps Platform Documentation](https://developers.google.com/maps/documentation/geocoding/overview).
+
+
+### Logical Data Flow
+
+The **ref_location** table is designed to be an independent location to write any type of address location typically entered into Google Maps or any street address location service or GIS tool.  Addresses may be partial, limited or only cover broad cities or states.  The Google Maps Geocode API will provide a value regardless and this application enrichment process will ingest and update the **ref_location** table accordingly.  PostgreSQL is a high performance transactional database which can manage many simultaneous reads, writes and updates.
+
+
 ## Common Test Examples
 
 ### Interactive Geocode API JSON Response from Web Browser
@@ -240,6 +328,8 @@ The following steps can be used to build a local environment for development and
 To simulate the Geocode API interactively from a web browser and visually understand the JSON response, use the following URL structure with your API key:
 
 ``https://maps.googleapis.com/maps/api/geocode/json?address=1030%20Richardson%20Dr,%20Raleigh,%20NC%2027603&key=ENTER_YOUR_API_KEY``
+
+## Required Monitoring and Troubleshooting
 
 
 ## Standards
