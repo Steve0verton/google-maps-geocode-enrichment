@@ -104,6 +104,8 @@ This application requires an API key to query the [Google Maps Geocode API](http
 
 - [Geocoding API](https://console.cloud.google.com/apis/library/geocoding-backend.googleapis.com)
 
+The API key is stored in the [docker-compose.yml](./cluster/app/docker-compose.yml) file which builds and runs the docker application as described in [Step 5 of the Deployment Instructions](#deployment-instructions).
+
 
 #### Docker Requirements
 
@@ -124,33 +126,67 @@ This application requires the latest version of Python installed.
 
 - [Download Python](https://www.python.org/downloads/)
 
+
 #### PostgreSQL Requirements
 
-This application was built using PostgreSQL version 11.x and currently only supports PostgreSQL.  Any version of PostgreSQL should work.  This application uses standard SQL table generation, reads and updates.
+This application was built using PostgreSQL version 11.x and currently only supports PostgreSQL.  Any version of PostgreSQL should work.  This application uses standard SQL table generation, reads and updates. **Define the [schema search path](https://www.postgresql.org/docs/9.3/ddl-schemas.html) for the PostgreSQL database user to prevent communication problems.** Schema-specific references are not defined within this project repository.
 
 - [Download PostgreSQL](https://www.postgresql.org/download/)
 
-A [containerized version of PostgreSQL](./test/postgres_db) is provided to help understand the application in your local environment.
+A [containerized version of PostgreSQL](./test/postgres_db) is provided to help understand the application in your local environment. Step 2 of the [Deployment Instructions](#deployment-instructions) provides further information on deploying the sample PostgreSQL docker container.
+
+##### PostgreSQL Database Connection
+
+By default this application uses a [containerized version of PostgreSQL](./test/postgres_db) deployed locally to provide an easy interface for development and testing.  Database credentials are stored in the [docker-compose.yml](./cluster/app/docker-compose.yml) file located within `/cluster/app`.
+
+- `POSTGRES_HOST` - Hostname of target PostgreSQL database server
+- `POSTGRES_DB` - Database name of target PostgreSQL database
+- `POSTGRES_USER` - PostgreSQL user (i.e. service account)
+- `POSTGRES_PASSWORD` - PostgreSQL user password to authenticate
+
+Further context on database credentials can be found in [Step 5 of the Deployment Instructions](#deployment-instructions).
+
+
+##### Define PostgreSQL User Search Schema Path
+
+The following command defines the default search path for a given PostgreSQL database user. The following command must be executed within the database.
+
+```
+SET search_path TO <your schema>;
+```
+
+Further information can be found in the [PostgreSQL Schema documentation](https://www.postgresql.org/docs/9.3/ddl-schemas.html).
 
 
 ## Technical Component Overview
 
 The following list provides an overview of key components:
 - PostgreSQL database
-- **ref_location** table within PostgreSQL database to store location data
+- [ref_location](#reflocation) table within PostgreSQL database to store location data
 - **geocode_lib** library (custom python application written in Docker)
-- Kafka infrastructure
+- [Kafka Infrastructure](#kafka-partitions)
 - Enrichment process (custom python applications built with docker compose)
+
 
 ### Dependencies
 
 PostgreSQL and Kafka must be running before the enrichment process begins.  The `geocode_lib` Docker image must be built as well.  The enrichment process leverages these in a service-oriented manner.
+
 
 ### Parallelized Enrichment Process
 
 Queries to Google must be parallelized; to accomplish this, a single client (**pg_query**) interacts with postgres, places the query on a kafka topic **geocode_input**, multiple clients (**g_query**) take these queries in parallel and convert the result to a format usable by the to-progres process and place it in a result topic **geocode_output**. And finally a single process (**pg_update**) reads the contents of that output topic and updates the database with the results.
 
 The rate limiting is controlled by **pg_query**.
+
+#### Scaling Performance
+
+The enrichment process can be scaled in parallel using the `g_query` parameter described in Step 5 of the [Deployment Instructions](#deployment-instructions).  Suggested values are provided below.
+- Development Unit Testing = 2
+- QA Testing = 10-50
+- Production = 90-110
+
+Ensure Kafka partitions are defined appropriately as described in the [Kafka Partitions](#kafka-partitions) section.  This application was originally built and operational on a small machine with only **4 vCPUs running 110 parallel threads** (`g_query`=110).
 
 
 ### Kafka Partitions
@@ -252,21 +288,12 @@ The following steps can be used to build a local environment for development and
   ```bash
   docker-compose up -d --scale g_query=5
   ```
-  - The [docker-compose.yml](./cluster/app/docker-compose.yml) defines the application engine as well as critical credentials for the Google Geocode API and target PostgreSQL database. Update the `API_KEY`, `POSTGRES_HOST`, `POSTGRES_DB`, `POSTGRES_USER`, and `POSTGRES_PASSWORD` accordingly. By default, the `POSTGRES_HOST` variable points to the sample PostgreSQL database image within the Docker network created previously
+  - The [docker-compose.yml](./cluster/app/docker-compose.yml) defines the application engine as well as critical credentials for the Google Geocode API and target PostgreSQL database. Update the `API_KEY` to your Google Geocode API key.  Update values for `POSTGRES_HOST`, `POSTGRES_DB`, `POSTGRES_USER`, and `POSTGRES_PASSWORD` to define your database connection to PostgreSQL. By default, the `POSTGRES_HOST` variable points to the sample PostgreSQL database image within the Docker network created previously.  The `POSTGRES_HOST` variable name must point to a hostname that the Docker network can resolve.
 
   The `docker-compose` command above builds and runs the Docker container in the background.
 
-## Scaling Performance
 
-The enrichment process can be scaled in parallel using the `g_query` parameter in Step 5 of the [Deployment Instructions](#deployment-instructions).  Suggested values are provided below.
-- Development Unit Testing = 2
-- QA Testing = 10-50
-- Production = 90-110
-
-Ensure Kafka partitions are defined appropriately as described in the [Kafka Partitions](#kafka-partitions) section.  This application was originally built and operational on a small machine with only **4 vCPUs running 110 parallel threads** (`g_query`=110).
-
-
-## ref_location
+## ref_location Table
 
 The **ref_location** table is used to store location information and results from this enrichment application process retrieved from the Google Maps Geocode API.  This section describes the physical structure of the table as well as intended usage and data flow expectations.  DDL code is provided to build this table along with useful indexes and constraints for PostgreSQL in [./doc/ref_location_ddl.sql](./doc/ref_location_ddl.sql). This application was built using PostgreSQL and currently only supports PostgreSQL.
 
@@ -338,6 +365,7 @@ To simulate the Geocode API interactively from a web browser and visually unders
 
 `https://maps.googleapis.com/maps/api/geocode/json?address=1030%20Richardson%20Dr,%20Raleigh,%20NC%2027603&key=ENTER_YOUR_API_KEY`
 
+
 ## Required Monitoring and Troubleshooting
 
 ### Volume Disk Space
@@ -363,6 +391,10 @@ docker logs <name of container that exited >
 ```
 
 ## Useful Docker Commands
+
+List docker networks: `docker network ls`
+
+Display useful information about a docker network: `docker network inspect <network name>`
 
 List all docker images: `docker image ls`
 

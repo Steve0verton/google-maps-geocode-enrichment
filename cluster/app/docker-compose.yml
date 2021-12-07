@@ -18,7 +18,7 @@ services:
       POSTGRES_DB: postgres
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ENTER_YOUR_PASSWORD
-      API_KEY: ENTER_YOUR_API_KEY
+      API_KEY: ENTER_YOUR_GOOGLE_GEOCODE_API_KEY
   pg_update:
     build: pg_update
     image: enrich_pg_update
