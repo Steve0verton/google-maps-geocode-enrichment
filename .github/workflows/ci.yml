@@ -46,6 +46,11 @@ jobs:
       - name: Python files parse
         run: python -m compileall -q lib cluster test
 
+      # PyYAML is not present in the setup-python interpreter on a clean runner,
+      # even though it usually is in a local dev environment. Install it explicitly.
+      - name: Install PyYAML
+        run: python -m pip install --disable-pip-version-check --quiet pyyaml
+
       - name: YAML files are well-formed
         run: |
           python - <<'PY'
