@@ -1,3 +1,25 @@
+# Editor / OS
 .vscode
-*.pyc
+.idea
 .DS_Store
+
+# Python bytecode and caches
+*.pyc
+__pycache__/
+*.egg-info/
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Build artefacts
+build/
+dist/
+
+# Credentials — never commit. The Google Maps API key and PostgreSQL password
+# belong in an untracked .env referenced from docker-compose via env_file:.
+.env
+.env.*
+!.env.example

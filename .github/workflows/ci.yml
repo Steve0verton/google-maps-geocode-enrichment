@@ -1,0 +1,101 @@
+# CI for an archived repository.
+#
+# Scope is deliberately narrow. This project's runtime stack (Python 3.6, Kafka 2.x via
+# the unmaintained wurstmeister images, Docker Compose v1) can no longer be provisioned on
+# a current GitHub runner, and the application cannot run without a live Google Maps API
+# key and a PostgreSQL instance. So this workflow does NOT prove the application works.
+#
+# What it does prove, on every push:
+#   1. Every tracked Python file still parses.
+#   2. Every YAML file is well-formed.
+#   3. Every relative link, image and in-page anchor in the Markdown docs resolves.
+#
+# (3) is the one that matters most here: the documentation is the deliverable now, and
+# broken paths and anchors were the defects actually found in it. Linting is intentionally
+# absent — the archived source has known warnings that will not be fixed, and a permanently
+# red badge tells a reader nothing.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Syntax and documentation integrity
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      # compileall parses and byte-compiles without importing, so no application code,
+      # no database driver and no network client is ever executed.
+      - name: Python files parse
+        run: python -m compileall -q lib cluster test
+
+      - name: YAML files are well-formed
+        run: |
+          python - <<'PY'
+          import pathlib, sys, yaml
+          bad = 0
+          for p in sorted(pathlib.Path('.').rglob('*.yml')):
+              if '.git' in p.parts:
+                  continue
+              try:
+                  yaml.safe_load(p.read_text())
+                  print(f"ok   {p}")
+              except Exception as e:
+                  bad += 1
+                  print(f"FAIL {p}: {e}")
+          sys.exit(1 if bad else 0)
+          PY
+
+      - name: Markdown links, paths and anchors resolve
+        run: |
+          python - <<'PY'
+          import pathlib, re, sys
+
+          def slug(text):
+              text = re.sub(r'`', '', text.strip()).lower()
+              text = re.sub(r'[^\w\s-]', '', text)
+              return re.sub(r'\s+', '-', text)
+
+          failures = []
+          for doc in sorted(pathlib.Path('.').rglob('*.md')):
+              if '.git' in doc.parts:
+                  continue
+              md = doc.read_text()
+              anchors = {slug(t) for _, t in re.findall(r'^(#{1,6})\s+(.*)$', md, re.M)}
+              for label, href in re.findall(r'\[([^\]]*)\]\(([^)]+)\)', md):
+                  if href.startswith(('http://', 'https://', 'mailto:')):
+                      continue
+                  if href.startswith('#'):
+                      if href[1:] not in anchors:
+                          failures.append(f"{doc}: dead anchor [{label}]({href})")
+                      continue
+                  target = href.split('#')[0].split('?')[0]
+                  if target and not (doc.parent / target).exists():
+                      failures.append(f"{doc}: missing path [{label}]({href})")
+              for src in re.findall(r'<img[^>]*src="([^"]+)"', md):
+                  target = src.split('?')[0]
+                  if not (doc.parent / target).exists():
+                      failures.append(f"{doc}: missing image {src}")
+
+          for f in failures:
+              print(f"FAIL {f}")
+          print(f"\n{len(failures)} problem(s)")
+          sys.exit(1 if failures else 0)
+          PY

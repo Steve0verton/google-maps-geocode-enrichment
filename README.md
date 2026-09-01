@@ -1,9 +1,31 @@
 # Google Maps Geocode Enrichment
 
+[![CI](https://github.com/overtonlabs/google-maps-geocode-enrichment/actions/workflows/ci.yml/badge.svg)](https://github.com/overtonlabs/google-maps-geocode-enrichment/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.6](https://img.shields.io/badge/python-3.6-blue.svg)](https://www.python.org/downloads/)
+[![Status: archived](https://img.shields.io/badge/status-archived-lightgrey.svg)](#project-status)
+
 This project repository provides a headless module to enrich location data in a database table using the Google Maps Geocode API.
+
+> **⚠️ Archived — kept as a reference implementation**
+>
+> This module was built in **2019–2020** and last updated in **December 2021**. It is
+> **no longer maintained**. It is preserved because the architecture — parallelising a
+> rate-limited third-party API across Kafka consumers to enrich a Postgres table — is
+> still a useful worked example.
+>
+> **It will not run as written on a current machine.** The stack it was built against has
+> moved on in ways that break specific commands in this README. Those breakages are
+> enumerated in **[Project Status](#project-status)** rather than silently fixed, so you
+> can see exactly what needs updating before you invest time in it.
+>
+> Built and operated against: **Python 3.6** · **PostgreSQL 11** · **Kafka 2.x**
+> (`wurstmeister` images) · **Docker Compose v1**, with `googlemaps`, `psycopg2` and
+> `kafka-python` unpinned.
 
 
 ## Table of Contents
+* [Project Status](#project-status)
 * [Background](#background)
 * [Technical Overview](#technical-overview)
 * [Google Web Services Legal Disclaimer](#google-web-services-legal-disclaimer)
@@ -22,7 +44,7 @@ This project repository provides a headless module to enrich location data in a 
     * [Scaling Performance](#scaling-performance)
   * [Kafka Partitions](#kafka-partitions)
 * [Deployment Instructions](#deployment-instructions)
-* [ref_location Table](#reflocation-table)
+* [ref_location Table](#ref_location-table)
   * [Physical Table Definition](#physical-table-definition)
   * [Logical Data Flow](#logical-data-flow)
 * [Common Test Examples](#common-test-examples)
@@ -35,6 +57,61 @@ This project repository provides a headless module to enrich location data in a 
   * [File Properties](#file-properties)
   * [Coding Standards](#coding-standards)
 * [Author Contact](#author-contact)
+
+
+## Project Status
+
+**Archived. No active maintenance, no issue triage, no dependency updates.** The code is
+unchanged from its December 2021 state and is kept public as a reference implementation.
+
+Nothing below is a bug report against the original design — it worked, in production, at
+the scale the [Technical Overview](#technical-overview) claims. These are the places where
+the *ecosystem* moved and left specific instructions in this README behind. They are
+documented rather than patched, because patching them without being able to run the stack
+end-to-end would replace verified-stale instructions with unverified ones.
+
+### What has changed underneath this project
+
+| Component | Built against | What changed | Effect on the instructions in this README |
+| :-- | :-- | :-- | :-- |
+| **Python** | 3.6 (`lib/Dockerfile`) | 3.6 reached end of life in December 2021 | The `python:3.6` base image receives no security updates and is increasingly awkward to build against. Nothing in the source uses syntax newer than 3.6, so the code itself ports forward cleanly. |
+| **Docker Compose** | v1 (`docker-compose`) | v2 (`docker compose`) renamed containers to use hyphens, and removed `networks.default.external.name` from the spec | `docker exec -it infra_kafka_1` in [Kafka Partitions](#kafka-partitions) must become `infra-kafka-1`. Both `docker-compose.yml` files need `external: true` with a top-level `name:` before v2 will parse them. |
+| **Kafka** | 2.x via `wurstmeister/kafka` | Kafka 3.0 removed the `--zookeeper` flag; the `wurstmeister` images have been unmaintained since ~2022 | Both `kafka-topics.sh --zookeeper …` commands in [Kafka Partitions](#kafka-partitions) fail on any modern broker. The modern form is `--bootstrap-server kafka:9092`. |
+| **Python packages** | `googlemaps`, `psycopg2`, `kafka-python` — all unpinned | The `kafka-python` releases contemporary with this project (2.0.x) fail on Python 3.12+; 2.1+ restored support. `psycopg2` builds from source and needs `pg_config` on the build host | Nothing is reproducible — `pip install` resolves to whatever is current on the day you build. `psycopg2-binary` is the drop-in that avoids the build toolchain. |
+| **PostgreSQL** | 11.x | Several major versions newer | No known breakage — the module uses only standard DDL, `SELECT … FOR UPDATE`, and `execute_values`. This one should still work. |
+
+### Known issues in this repository
+
+- **The seeded sample data loads two columns swapped.** `test/postgres_db/init.sql`
+  declares `location_type` before `enrichment_api_response`, but both sample CSVs list
+  them in the opposite order. `seed.sh` uses `COPY … CSV HEADER`, and **`COPY` matches
+  columns by position — the header row is skipped, not used for mapping.** Both columns
+  are `jsonb`, so the load succeeds and the two values land in each other's column. Any
+  analysis of the seeded `location_type` or `enrichment_api_response` fields is reading
+  the wrong column.
+- **`ref_location_sample_10k.csv` cannot be loaded into this table.** It has 44 columns;
+  the table defined in `init.sql` has 45 (the 10k file predates `location_type`).
+  `seed.sh` only ever loads the 100-row `ref_location_sample.csv`; pointing it at the 10k
+  file fails outright rather than silently.
+- **`test/geocode_lib/` is a byte-for-byte duplicate of `lib/geocode_lib/`.** Two copies
+  of the same module, with no mechanism keeping them in sync. `lib/` is the one that gets
+  packaged and built into the `geocode_lib` image.
+- **API credentials are handled by editing committed files.** Both
+  [Google Maps Geocode API Credentials](#google-maps-geocode-api-credentials) and Step 5
+  of the [Deployment Instructions](#deployment-instructions) tell you to put a real key
+  and a real database password directly into `cluster/app/docker-compose.yml`, which is
+  tracked by git. If you revive this project, move those to a `.env` file referenced via
+  Compose's `env_file:` before you put a live key anywhere near it. This is the first item
+  in [TODO.md](./TODO.md) and was never resolved.
+- **`doc/diagrams.drawio`** is the editable source for the architecture diagram. It is not
+  linked from anywhere else in this documentation.
+
+### If you want to revive it
+
+The architecture is sound and the pieces are small. The shortest path to a running stack is
+to rebase the container images — a current `python:3.x` base, `psycopg2-binary`, a
+maintained Kafka image such as `bitnami/kafka` or `apache/kafka` — then work through the
+known issues above. Everything else in this README describes behaviour that has not changed.
 
 
 ## Background
@@ -109,6 +186,11 @@ This application requires an API key to query the [Google Maps Geocode API](http
 
 The API key is stored in the [docker-compose.yml](./cluster/app/docker-compose.yml) file which builds and runs the docker application as described in [Step 5 of the Deployment Instructions](#deployment-instructions).
 
+> **⚠️ That file is tracked by git.** Putting a live API key or database password there
+> means committing it. Before using a real key, move these values into an untracked
+> `.env` file and reference it from Compose with `env_file:`. Google Maps API keys are
+> billable and are harvested from public repositories automatically.
+
 
 #### Docker Requirements
 
@@ -125,7 +207,10 @@ docker network create geocode
 
 #### Python Requirements
 
-This application requires the latest version of Python installed.
+This application was built against **Python 3.6**, which is pinned in
+[`lib/Dockerfile`](./lib/Dockerfile) (`FROM python:3.6`). The container image is what
+actually runs the code, so that pin — not your host Python — determines the runtime.
+Python 3.6 reached end of life in December 2021; see [Project Status](#project-status).
 
 - [Download Python](https://www.python.org/downloads/)
 
@@ -165,7 +250,7 @@ Further information can be found in the [PostgreSQL Schema documentation](https:
 
 The following list provides an overview of key components:
 - PostgreSQL database
-- [ref_location](#reflocation) table within PostgreSQL database to store location data
+- [ref_location](#ref_location-table) table within PostgreSQL database to store location data
 - **geocode_lib** library (custom python application written in Docker)
 - [Kafka Infrastructure](#kafka-partitions)
 - Enrichment process (custom python applications built with docker compose)
@@ -196,22 +281,36 @@ Ensure Kafka partitions are defined appropriately as described in the [Kafka Par
 
 To allow the parallelism concept to work, the geocode_input Kafka topic must have a number of partitions greater or equal to the number of g_query clients.
 
+> **⚠️ These three commands no longer work as written.** They assume Docker Compose v1
+> container naming and a Kafka version that still accepted `--zookeeper`. See
+> [Project Status](#project-status). The originals are kept below for the historical
+> record, with the modern equivalent alongside each.
+
 Enter the running Kafka Docker container.
 ```bash
-docker exec -it infra_kafka_1 /bin/bash
+docker exec -it infra_kafka_1 /bin/bash        # as originally written (Compose v1)
+docker exec -it infra-kafka-1 /bin/bash        # Compose v2 — containers use hyphens
 ```
 
 Set partitions on a new topic
 ```bash
+# As originally written — --zookeeper was removed in Kafka 3.0
 kafka-topics.sh --create --zookeeper zookeeper --topic geocode_input --partitions 50 --replication-factor 1
+
+# Modern equivalent
+kafka-topics.sh --create --bootstrap-server kafka:9092 --topic geocode_input --partitions 50 --replication-factor 1
 ```
 
 Or if the topic already exists
 ```bash
+# As originally written
 kafka-topics.sh --alter --zookeeper zookeeper --topic geocode_input --partitions 50
+
+# Modern equivalent
+kafka-topics.sh --alter --bootstrap-server kafka:9092 --topic geocode_input --partitions 50
 ```
 
-Additional documentation can be found on the [wurstmeister Kafka Github](https://github.com/wurstmeister/kafka-docker).
+Additional documentation can be found on the [wurstmeister Kafka Github](https://github.com/wurstmeister/kafka-docker), which has been unmaintained since roughly 2022.
 
 
 ## Deployment Instructions
@@ -260,7 +359,7 @@ The following steps can be used to build a local environment for development and
   ```bash
   docker build -t geocode_lib .
   ```
-  - The [Dockerfile](./lib/geocode_lib/Dockerfile) defines how the Python application is built.
+  - The [Dockerfile](./lib/Dockerfile) defines how the Python application is built. It lives at the root of `/lib`, not inside `/lib/geocode_lib`.
 
   The `geocode_lib` Docker image is built using [python code](./lib/geocode_lib) to help translate data between the Geocode API and the PostgreSQL target database.
 

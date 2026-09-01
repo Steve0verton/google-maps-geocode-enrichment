@@ -1,0 +1,28 @@
+# The README "Standards > File Properties" section requires unix line endings (LF)
+# and UTF-8. Nothing previously enforced that; this file does.
+
+# Auto-detect text files and normalize on commit
+* text=auto
+
+# Source and config — always LF
+*.py   text eol=lf
+*.sql  text eol=lf
+*.sh   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.txt  text eol=lf
+*.md   text eol=lf
+*.csv  text eol=lf
+
+# Repo metadata — always LF
+.gitignore      text eol=lf
+.gitattributes  text eol=lf
+Dockerfile      text eol=lf
+
+# Binary — never diff, never convert
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.pdf     binary
+*.drawio  binary
